@@ -1,0 +1,1143 @@
+package com.hx.rebottest.utils;
+
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.lang.reflect.Method;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.List;
+
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import android.app.ActivityManager;
+import android.app.AlertDialog.Builder;
+import android.app.AppOpsManager;
+import android.app.Dialog;
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.SharedPreferences.Editor;
+import android.content.pm.IPackageDataObserver;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.PackageManager.NameNotFoundException;
+import android.content.pm.PermissionInfo;
+import android.graphics.PixelFormat;
+import android.graphics.Rect;
+import android.os.Handler;
+import android.os.SystemClock;
+import android.util.Log;
+import android.view.Gravity;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.WindowManager;
+import android.view.WindowManager.LayoutParams;
+import android.view.accessibility.AccessibilityNodeInfo;
+import android.widget.TextView;
+
+import com.android.uiautomator.core.UiObject;
+import com.android.uiautomator.core.UiObjectNotFoundException;
+import com.android.uiautomator.core.UiScrollable;
+import com.android.uiautomator.core.UiSelector;
+import com.hx.rebottest.R;
+import com.hx.rebottest.log.Logger;
+import com.hx.rebottest.model.RecordInfo;
+import com.hx.rebottest.runner.UiAutomatorRunner;
+import com.hx.rebottest.service.FloatWindowService;
+
+public class Utils {
+
+	private static final String TAG = "robot_Utils";
+	static WindowManager mWindowManager;
+	static int sW;
+	static int sH;
+	private static LayoutParams wmToastParams;
+	private static View toastView;
+	private static TextView toastText;
+	private static StringBuffer nodeInfosStrBuf;
+
+	public static enum LOCALTYPE {
+		WIDGETATTR, RELATIVEROOTNODE, NODE, PARENT, AXIS,NONE
+	};
+
+	public static String getActivityName() {
+		ActivityManager am = (ActivityManager) MyApplication.getContext()
+				.getSystemService(Context.ACTIVITY_SERVICE);
+		ComponentName cn = am.getRunningTasks(1).get(0).topActivity;
+
+		Logger.i(TAG, "pkg:" + cn.getPackageName());
+		Logger.i(TAG, "cls:" + cn.getClassName());
+
+		return cn.flattenToString();
+	}
+
+	public static void startActivity(String activityName) {
+		Logger.i(TAG, "into startActivity. activityName = " + activityName);
+		Intent startIntent = new Intent(Intent.ACTION_MAIN);
+		startIntent.addCategory(Intent.CATEGORY_LAUNCHER);
+		startIntent.setComponent(new ComponentName(activityName.split("/")[0],
+				activityName.split("/")[1]));
+		startIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+		try {
+			MyApplication.getContext().startActivity(startIntent);
+		} catch (Exception e) {
+			Logger.e(TAG, "startActivity faild! ERROR:" + e.getMessage());
+		}
+
+	}
+
+	public static boolean clickNode(AccessibilityNodeInfo node) {
+		Logger.i(TAG, "into clickNode. node info = " + node.toString());
+		// UiObject mUiObject = new UiObject(new UiSelector());
+		// mUiObject.clickNode(node);
+
+		try {
+			JSONObject params = new JSONObject();
+			JSONObject conditon = new JSONObject();
+			conditon.putOpt("node", node);
+
+			params.putOpt("conditions", conditon);
+
+			params.put("fuzzy", false);
+			params.put("downtime", 100);
+			params.put("isSync", true);
+			params.put("steps", 50);
+			params.put("allowScroll", false);
+			params.put("type", "NORMAL");
+			params.put("maxSwipes", 10);
+			params.put("timeout", 5);
+			params.put("deadzone", 0.1);
+
+			return clickWidget(MyApplication.getContext(), params);
+
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		return false;
+	}
+
+	public static boolean scrollClick(RecordInfo recordInfo) {
+		if (recordInfo.getNode() != null) {
+			Logger.i(TAG, "into clickNode. node info = "
+					+ recordInfo.getNode().toString());
+		}
+		try {
+			JSONObject params = new JSONObject();
+			JSONObject conditon = new JSONObject();
+			if (recordInfo.getLocalType() == LOCALTYPE.WIDGETATTR) {
+				if (!Utils.isNullOrBlank(recordInfo.getId())) {
+					conditon.put("id", Utils.getNormalId(recordInfo.getId()));
+				}
+				if (!Utils.isNullOrBlank(recordInfo.getText())) {
+					conditon.put("text", recordInfo.getText());
+				}
+			} else if (recordInfo.getLocalType() == LOCALTYPE.NODE) {
+				// conditon.putOpt("node", recordInfo.getNode());
+				return clickNode(recordInfo.getNode());
+			} else if (recordInfo.getLocalType() == LOCALTYPE.PARENT) {
+
+			} else if (recordInfo.getLocalType() == LOCALTYPE.AXIS) {
+
+			}
+
+			params.putOpt("conditions", conditon);
+			if (recordInfo.isScroll()) {
+				params.put("allowScroll", true);
+			} else {
+				params.put("allowScroll", false);
+			}
+
+			return clickWidget(MyApplication.getContext(), params);
+
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		return false;
+	}
+
+	public static boolean clickWidget(Context context, JSONObject params)
+			throws UiObjectNotFoundException {
+		// JSONObject conditions = params.optJSONObject("conditions");
+		Logger.i(TAG, "clickWidget params:" + params.toString());
+		int timeout = params.optInt("timeout", 10) * 1000;
+		boolean isSync = params.optBoolean("isSync", false);
+		boolean waitForIdle = params.optBoolean("waitForIdle", true);
+		String type = params.optString("type", "NORMAL");
+		int downtime = params.optInt("downtime", 800);
+		if (downtime <= 800 && type.equalsIgnoreCase("LONG")) {
+			downtime = 2 * 1000;
+		}
+
+		AccessibilityNodeInfo node = getNodeInfo(params);
+		if (null == node) {
+			Logger.e(TAG, "clickWidget faild! node info is null! ");
+			return false;
+		}
+		Logger.e(TAG, "clickWidget node:" + node.toString());
+		Rect rect = new Rect();
+		node.getBoundsInScreen(rect);
+
+		UiObject object = new UiObject(null);
+		boolean result = object.clickWidget(node, type, downtime, timeout,
+				isSync);
+
+		if (waitForIdle) {
+			Logger.i(TAG, "go to waitForIdle!");
+			UiAutomatorRunner.getInstance().getUiDevice().waitForIdle(timeout);
+		}
+		Logger.i(TAG,
+				"clickWidget result:x,y " + result + " x: " + rect.centerX()
+						+ " y:" + rect.centerY());
+		return result;
+	}
+
+	public static String getNormalId(String id) {
+		int index = id.indexOf("id/");
+		if (index >= 0) {
+			return id.substring(index);
+		} else {
+			return id;
+		}
+	}
+
+	// /**
+	// * Perform a click at arbitrary coordinates specified by the user
+	// *
+	// * @param x
+	// * coordinate
+	// * @param y
+	// * coordinate
+	// * @return true if the click succeeded else false
+	// */
+	// public static boolean click(Context context, JSONObject params) {
+	// Logger.i(TAG, "into click by x,y");
+	// int x = params.optInt("x");
+	// int y = params.optInt("y");
+	// String type = params.optString("type", "NORMAL");
+	// int time = params.optInt("time", 800);
+	// Logger.i(TAG, "x:" + x + ",y:" + y);
+	// return click(x, y, type, time);
+	// }
+
+	// private static boolean click(int x, int y, String type, int time) {
+	// if (type.equals("NORMAL")) {
+	// Logger.i(TAG, "click type is NORMAL");
+	// return UiAutomatorRunner.getInstance().getUiDevice().click(x, y);
+	// } else if (type.equals("LONG")) {
+	// Logger.i(TAG, "click type is LONG");
+	// return UiAutomatorRunner.getInstance().getUiDevice()
+	// .longClick(x, y, time);
+	// } else if (type.equals("DOUBLE")) {
+	// Logger.i(TAG, "click type is DOUBLE");
+	// if (UiAutomatorRunner.getInstance().getUiDevice().click(x, y)) {
+	// SystemClock.sleep(100L);
+	// if (UiAutomatorRunner.getInstance().getUiDevice().click(x, y)) {
+	// return true;
+	// }
+	// }
+	//
+	// return false;
+	// } else {
+	// // add by x00226925 for "DOWN"/"UP"/"MOVE"
+	// return UiAutomatorRunner.getInstance().getUiDevice()
+	// .click(x, y, type, time);
+	// }
+	// }
+	// public static void scrollClick(RecordInfo recordInfo) {
+	// Logger.i(TAG, "into clickNode. node info = "
+	// + recordInfo.getNode().toString());
+	// try {
+	// JSONObject params = new JSONObject();
+	// JSONObject conditon = new JSONObject();
+	// if (recordInfo.getLocalType() == LOCALTYPE.WIDGETATTR) {
+	// if (!Utils.isNullOrBlank(recordInfo.getId())) {
+	// conditon.put("id", Utils.getNormalId(recordInfo.getId()));
+	// }
+	// if (!Utils.isNullOrBlank(recordInfo.getText())) {
+	// conditon.put("text", recordInfo.getText());
+	// }
+	// } else if (recordInfo.getLocalType() == LOCALTYPE.NODE) {
+	// conditon.putOpt("node", recordInfo.getNode());
+	// } else if (recordInfo.getLocalType() == LOCALTYPE.PARENT) {
+	//
+	// }
+	// params.putOpt("conditions", conditon);
+	// params.put("fuzzy", false);
+	// params.put("downtime", 100);
+	// params.put("isSync", true);
+	// params.put("steps", 50);
+	// if (recordInfo.isScroll()) {
+	// params.put("allowScroll", true);
+	// } else {
+	// params.put("allowScroll", false);
+	// }
+	// params.put("type", "NORMAL");
+	// params.put("maxSwipes", 10);
+	// params.put("timeout", 5);
+	// params.put("deadzone", 0.1);
+	// clickWidget(MyApplication.getContext(), params);
+	//
+	// } catch (Exception e) {
+	// // TODO Auto-generated catch block
+	// e.printStackTrace();
+	// }
+	//
+	// }
+
+	public static void swipe(AccessibilityNodeInfo begin,
+			AccessibilityNodeInfo end, int steps) {
+		Logger.i(TAG, "into swipe. beginNode info = " + begin.toString());
+		Logger.i(TAG, "into swipe. endNode info = " + end.toString());
+		UiObject mUiObject = new UiObject(new UiSelector());
+		mUiObject.swipe(begin, end, steps);
+	}
+
+	// 存储RecordFlag
+	public static void setDataToFile(Context context, String key, Object value) {
+
+		Context ctx = context;
+		SharedPreferences sp = ctx.getSharedPreferences("data", 0);
+		Editor editor = sp.edit();
+		if (value instanceof Integer == true) {
+			editor.putInt(key, Integer.parseInt(String.valueOf(value)));
+
+		} else if (value instanceof String == true) {
+			editor.putString(key, String.valueOf(value));
+		} else if (value instanceof Boolean == true) {
+			editor.putBoolean(key, Boolean.parseBoolean(String.valueOf(value)));
+		}
+		editor.commit();
+	}
+
+	public static Object getDataFromFile(Context context, String key,
+			String valueType) {
+
+		Context ctx = context;
+		SharedPreferences sp = ctx.getSharedPreferences("data", 0);
+		Object value = null;
+		if (valueType.equals("String")) {
+			value = sp.getString(key, "0");
+		} else if (valueType.equals("int")) {
+			value = sp.getInt(key, 0);
+		} else if (valueType.equals("bool")) {
+			value = sp.getBoolean(key, false);
+		} else {
+			// 没有該数据类型
+		}
+		return value;
+	}
+
+	public static boolean grantPermission(String packageName) {
+		Logger.i(TAG, "into grantPermission. Params:" + packageName);
+		PackageManager pm = MyApplication.getContext().getPackageManager();
+		boolean grant = true;
+		try {
+			PackageInfo packageInfo = pm.getPackageInfo(packageName,
+					PackageManager.GET_PERMISSIONS);
+			for (int i = 0; i < packageInfo.requestedPermissions.length; i++) {
+				String requestedPerm = packageInfo.requestedPermissions[i];
+
+				final PermissionInfo permInfo;
+				try {
+					permInfo = pm.getPermissionInfo(requestedPerm, 0);
+				} catch (NameNotFoundException e) {
+					Log.w(TAG, "Unknown permission:" + requestedPerm);
+					continue;
+				}
+				String permName = permInfo.name;
+				final boolean runtime = permInfo.protectionLevel == PermissionInfo.PROTECTION_DANGEROUS;
+				final boolean granted = (packageInfo.requestedPermissionsFlags[i] & PackageInfo.REQUESTED_PERMISSION_GRANTED) != 0;
+				try {
+					if (runtime) {
+						Log.d(TAG, "permission" + permName);
+						if (grant && !granted) {
+							pm.grantRuntimePermission(packageName, permName,
+									android.os.Process.myUserHandle());
+						} else if (!grant && granted) {
+							pm.revokeRuntimePermission(packageName, permName,
+									android.os.Process.myUserHandle());
+						}
+					}
+				} catch (SecurityException e) {
+					//
+					e.printStackTrace();
+				}
+			}
+			return true;
+		} catch (Exception e) {
+			Logger.e(TAG, "grantPermission faild! ERROR: " + e.getMessage());
+			return false;
+		}
+	}
+
+	public static void setMode(int Oprators) {
+
+		Context mContext = MyApplication.getContext();
+		try {
+			String packageName = mContext.getPackageName();
+			Logger.i(TAG, "set mode ; packageName is :" + packageName);
+			PackageManager mPackageManager = mContext.getPackageManager();
+
+			AppOpsManager localAppOpsManager = (AppOpsManager) mContext
+					.getSystemService("appops");
+			PackageInfo packageInfo = mPackageManager.getPackageInfo(
+					packageName, 8192);
+
+			Class apposClass = localAppOpsManager.getClass();
+			Class[] arrayOfClass = new Class[4];
+			arrayOfClass[0] = Integer.TYPE;
+			arrayOfClass[1] = Integer.TYPE;
+			arrayOfClass[2] = String.class;
+			arrayOfClass[3] = Integer.TYPE;
+			Method setMode = apposClass.getDeclaredMethod("setMode",
+					arrayOfClass);
+			setMode.setAccessible(true);
+
+			Object[] arrayOfObject = new Object[4];
+			arrayOfObject[0] = Integer.valueOf(Oprators);// AppOpsManager.OP_WRITE_SMS
+			arrayOfObject[1] = Integer.valueOf(packageInfo.applicationInfo.uid);
+			arrayOfObject[2] = packageName;
+			arrayOfObject[3] = Integer.valueOf(AppOpsManager.MODE_ALLOWED);
+
+			setMode.invoke(localAppOpsManager, arrayOfObject);
+		} catch (Exception e) {
+			Logger.e(TAG, e.getClass().toString() + ":"
+					+ e.getMessage().toString() + ";set mode failed!");
+		}
+	}
+
+	// public static String sendText(AccessibilityNodeInfo node, String text) {
+	// Logger.i(TAG, "into sendText");
+	//
+	// // UiAutomatorRunner.getInstance().initialize();
+	// // String text = params.optString("text");
+	// // boolean isClear = params.optBoolean("isClear", false);
+	// // boolean isStep = params.optBoolean("isStep", true);
+	// // String id = params.optString("id");
+	// // int instance = params.optInt("instance", 0);
+	// /*
+	// * 增加光标插入控制参数"insert" 目前支持的值有begin or end 2016/1/16
+	// */
+	// // String insert = params.optString("insert");
+	//
+	// // UiSelector selector = new UiSelector();
+	// // if (null != id && !id.equals("")) {
+	// // selector = getIdUiSelector(id, instance);
+	// // }
+	//
+	// // UiObject object = new UiObject(selector);
+	// try {
+	// UiObject mUiObject = new UiObject(new UiSelector());
+	// Logger.i(TAG, "Text: " + text);
+	// text = Utf7ImeHelper.e(text);
+	// Logger.i(TAG, "Utf7ImeHelper Text: " + text);
+	// return mUiObject.setText(node, text) + "";
+	// // if (isClear) {
+	// // if (isStep) {
+	// // clearTextField(object);
+	// // } else {
+	// //
+	// // return object.setText(text) + "";
+	// // }
+	// // }
+	// //
+	// // if (null != insert && !insert.equals("")) {
+	// // if (insert.equalsIgnoreCase("begin")) {
+	// // object.clickTopLeft();
+	// // } else if (insert.equalsIgnoreCase("end")) {
+	// // object.clickBottomRight();
+	// // }
+	// // }
+	// //
+	// // return object.setTextNonClear(text) + "";
+	// } catch (UiObjectNotFoundException e) {
+	// return false + "," + e.toString();
+	// }
+	// }
+	/**
+	 * sendText Sets the text in an editable field, after clearing the field's
+	 * content.
+	 * 
+	 * @param context
+	 * @param params
+	 * @return
+	 * @throws UiObjectNotFoundException
+	 */
+	public static boolean sendText(RecordInfo recordInfo) {
+		Logger.e(TAG, "into sendText");
+		String text = recordInfo.getInput_text();
+		String id = recordInfo.getId();
+		Logger.i(TAG, "输入的Text: " + text + " id:" + id);
+		if (Utils.isNullOrBlank(text)) {
+			return false;
+		}
+		if (!Utils.isNullOrBlank(id)) {
+			id = Utils.getNormalId(id);
+		}
+
+		UiAutomatorRunner.getInstance().initialize();
+
+		// boolean isClear = params.optBoolean("isClear", false);
+		// boolean isStep = params.optBoolean("isStep", true);
+		// String id = params.optString("id");
+		// int instance = params.optInt("instance", 0);
+		boolean isClear = true;
+		boolean isStep = false;
+
+		int instance = 0;
+		/*
+		 * 增加光标插入控制参数"insert" 目前支持的值有begin or end 2016/1/16
+		 */
+		String insert = "begin";
+
+		UiSelector selector = new UiSelector();
+		if (!Utils.isNullOrBlank(id)) {
+			selector = getIdUiSelector(id, instance);
+		}
+
+		UiObject object = new UiObject(selector);
+		try {
+			Logger.i(TAG, "Text: " + text);
+			text = Utf7ImeHelper.e(text);
+			Logger.i(TAG, "Utf7ImeHelper Text: " + text);
+			if (isClear) {
+				if (isStep) {
+					clearTextField(object);
+				} else {
+
+					return object.setText(text);
+				}
+			}
+			if (null != insert && !insert.equals("")) {
+				if (insert.equalsIgnoreCase("begin")) {
+					object.clickTopLeft();
+				} else if (insert.equalsIgnoreCase("end")) {
+					object.clickBottomRight();
+				}
+			}
+
+			return object.setTextNonClear(text);
+		} catch (UiObjectNotFoundException e) {
+			return false;
+		}
+	}
+
+	private static UiSelector getIdUiSelector(String id, int instance) {
+		Logger.i(TAG, "getIdUiSelector");
+
+		UiSelector selector = new UiSelector();
+		selector = selector.resourceIdMatches(".+" + id);
+		if (instance != 0) {
+			selector = selector.index(instance);
+		}
+
+		return selector;
+	}
+
+	private static UiObject clearTextField(UiObject object) {
+		try {
+			String text = "";
+			int textSize = 0;
+			if (object.isPassword()) {
+				textSize = 20;
+			} else {
+				text = object.getText();
+				textSize = text.length();
+				if (textSize == 0) {
+					textSize = 20;
+				}
+				Logger.i(TAG, "clearTextField text: " + text);
+			}
+			Logger.i(TAG, "textSize: " + textSize);
+			for (int i = 0; i < textSize; i++) {
+				object.clickBottomRight();
+				UiAutomatorRunner.getInstance().getUiDevice().pressDelete();
+			}
+
+		} catch (UiObjectNotFoundException e) {
+			//
+		}
+
+		return object;
+	}
+
+	public static boolean isNullOrBlank(String sequen) {
+		if ((sequen == null) || (sequen.length() == 0) || ("".equals(sequen))
+				|| ("null".equalsIgnoreCase(sequen))) {
+			return true;
+		}
+		return sequen.matches("\\s+");
+	}
+
+	public static String execCommand(String command) throws IOException {
+		Runtime runtime = Runtime.getRuntime();
+		Process proc = runtime.exec(command);
+		StringBuffer stringBuffer = new StringBuffer();
+		try {
+			if (proc.waitFor() != 0) {
+				Logger.i(TAG, "exit value = " + proc.exitValue());
+			}
+			BufferedReader in = new BufferedReader(new InputStreamReader(
+					proc.getInputStream()));
+
+			String line = null;
+			while ((line = in.readLine()) != null) {
+				stringBuffer.append(line + " ");
+			}
+			Logger.i(TAG, stringBuffer.toString());
+
+		} catch (InterruptedException e) {
+			Logger.i(TAG, e.toString());
+		} finally {
+			try {
+				proc.destroy();
+			} catch (Exception e2) {
+			}
+		}
+		return stringBuffer.toString();
+	}
+
+	// public static boolean clickWidget(Context context, JSONObject params)
+	// throws UiObjectNotFoundException {
+	// JSONObject conditions = params.optJSONObject("conditions");
+	// Logger.i(TAG, "clickWidget params:" + params.toString());
+	// int timeout = params.optInt("timeout", 10) * 1000;
+	// boolean isSync = params.optBoolean("isSync", false);
+	// boolean waitForIdle = params.optBoolean("waitForIdle", true);
+	// String type = params.optString("type", "NORMAL");
+	// int downtime = params.optInt("downtime", 800);
+	// if (downtime <= 800 && type.equalsIgnoreCase("LONG")) {
+	// downtime = 2 * 1000;
+	// }
+	// AccessibilityNodeInfo node = getNodeInfo(params);
+	// if (null == node) {
+	// Logger.e(TAG, "clickWidget faild! node info is null! ");
+	// return false;
+	// }
+	//
+	// UiObject object = new UiObject(null);
+	// boolean result = object.clickWidget(node, type, downtime, timeout,
+	// isSync);
+	// Logger.i(TAG, "clickWidget result: " + result);
+	// if (waitForIdle) {
+	// Logger.i(TAG, "go to waitForIdle!");
+	// UiAutomatorRunner.getInstance().getUiDevice().waitForIdle(timeout);
+	// }
+	//
+	// return result;
+	// }
+
+	private static AccessibilityNodeInfo getNodeInfo(JSONObject params)
+			throws UiObjectNotFoundException {
+		JSONObject conditions = params.optJSONObject("conditions");
+		Logger.i(TAG, "conditions: " + conditions.toString());
+
+		boolean fuzzy = params.optBoolean("fuzzy", false);
+		boolean allowScroll = params.optBoolean("allowScroll", false);
+		int steps = params.optInt("steps", 70);
+		double deadzone = params.optDouble("deadzone", 0.1);
+		int maxSwipes = params.optInt("maxSwipes", 30);
+		int timeout = params.optInt("timeout", 10) * 1000;
+		boolean waitForIdle = conditions.optBoolean("waitForIdle", true);
+		UiSelector selector = getSelector(conditions, waitForIdle, fuzzy);
+		if (conditions.has("after")) {
+			UiSelector after = getSelector(conditions.optJSONObject("after"),
+					waitForIdle, fuzzy);
+			selector.setAfter(after);
+		}
+
+		if (conditions.has("before")) {
+			UiSelector before = getSelector(conditions.optJSONObject("before"),
+					waitForIdle, fuzzy);
+			selector.setBefore(before);
+		}
+
+		// UiAutomatorRunner.getInstance().initialize();
+		AccessibilityNodeInfo node = null;
+		Logger.i(TAG, "clickNode by selector: " + selector.toString());
+		if (allowScroll) {
+			// 新版本滑动查找必须添加.scrollable(true)
+			UiScrollable uiScrollable = new UiScrollable(
+					new UiSelector().scrollable(true));
+			uiScrollable.setSwipeDeadZonePercentage(deadzone);
+			node = uiScrollable.scrollIntoView(selector, maxSwipes, steps,
+					timeout);
+		} else {
+			UiObject object = new UiObject(selector);
+			node = object.findNodeInfo(timeout);
+		}
+
+		return node;
+	}
+
+	private static UiSelector getSelector(JSONObject params,
+			boolean waitForIdle, boolean fuzzy) {
+		Logger.i(TAG, "getSelector params: " + params.toString());
+		UiSelector selector = new UiSelector();
+		selector.setWaitForIdle(waitForIdle);
+		if (params.has("text")) {
+			String text = params.optString("text");
+			selector = fuzzy ? selector.textContains(text) : selector
+					.text(text);
+		}
+
+		if (params.has("startText")) {
+			String startText = params.optString("startText");
+			selector = selector.textStartsWith(startText);
+		}
+
+		if (params.has("id")) {
+			String id = params.optString("id");
+			selector = selector.resourceIdMatches(".+" + id);
+		}
+
+		if (params.has("desc")) {
+			String desc = params.optString("desc");
+			selector = fuzzy ? selector.descriptionContains(desc) : selector
+					.description(desc);
+		}
+
+		if (params.has("className")) {
+			String className = params.optString("className");
+			selector = selector.className(className);
+		}
+
+		if (params.has("name")) {
+			String className = params.optString("name");
+			selector = selector.className(className);
+		}
+
+		if (params.has("instance")) {
+			int instance = params.optInt("instance", 0);
+			selector = selector.index(instance);
+		}
+
+		if (params.has("index")) {
+			int instance = params.optInt("index", 0);
+			selector = selector.index(instance);
+		}
+
+		if (params.has("window")) {
+			String window = params.optString("window");
+			selector.setWindow(window);
+		}
+
+		if (params.has("node")) {
+
+			AccessibilityNodeInfo node = (AccessibilityNodeInfo) (params
+					.opt("node"));
+			Logger.i(TAG, "node info: " + node.toString());
+			selector = selector.selector_node(node);
+		}
+
+		return selector;
+	}
+
+	public static AccessibilityNodeInfo getRootNode() {
+		return UiAutomatorRunner.getInstance().getUiDevice()
+				.getAutomatorBridge().getRootInActiveWindow();
+	}
+
+	public static boolean clearDataResult = false;
+	public static String clearDataPkg = "";
+
+	public static boolean clearDataByPackageName(Context context,
+			String packageName) {
+		/*
+		 * 这里调用ActivityManager类的clearApplicationUserData方法进行清除应用数据；
+		 * 由于clearApplicationUserData为隐藏方法，所以使用反射机制进行调用
+		 */
+		try {
+			clearDataResult = false;
+			clearDataPkg = "";
+			Logger.i(TAG, "clearAppUserdataBy:" + packageName);
+			ActivityManager activityManager = (ActivityManager) context
+					.getSystemService(Context.ACTIVITY_SERVICE);
+			/*
+			 * 清除用户数据的请求下发之后，立即返回结果；紧接着的操作可能会被正在异步执行的清理操作给影响到。
+			 * 比如清理数据后启动应用，就会出现启动应用的时候实际后台还在进行清理操作，最终导致异常。 这里修改为等待清理完成之后再返回清理操作!
+			 * zwx235140 20160815
+			 */
+
+			/*
+			 * modify by zwx235140 20161202 在以下几种异常场景会同步返回false: 1、包名错误 2、应用已被卸载
+			 * 3、provider uri
+			 */
+			boolean result = activityManager.clearApplicationUserData(
+					packageName, new ClearUserDataObserver());
+			if (!result) {
+				return false;
+			}
+			return isSuccForClearData(packageName);
+		} catch (Exception e) {
+			Logger.e(TAG,
+					"clearApplicationUserData faild!ERROR:" + e.getClass()
+							+ ":" + e.getMessage().toString());
+			return false;
+		}
+	}
+
+	public static boolean isSuccForClearData(String pkgName) {
+		Logger.i(TAG, "into isSuccForClearData!PkgName: " + pkgName);
+		long start = SystemClock.currentThreadTimeMillis();
+
+		// modify zwx235140 20161202 timeout: 5 >> 2
+		while (SystemClock.currentThreadTimeMillis() - start < 2 * 1000) {
+
+			if (clearDataResult
+					&& (!clearDataPkg.equals("") && clearDataPkg
+							.equals(pkgName))) {
+				Logger.i(TAG, "clearUserData is success!");
+				return true;
+			}
+
+			SystemClock.sleep(500);
+		}
+
+		return true;
+	}
+
+	private static class ClearUserDataObserver extends
+			IPackageDataObserver.Stub {
+
+		@Override
+		public void onRemoveCompleted(String arg0, boolean arg1) {
+			Logger.i(TAG, "clearUserData result>> " + arg0 + ": " + arg1);
+			clearDataResult = arg1;
+			clearDataPkg = arg0;
+		}
+
+	}
+
+	public static void showDialog(String message) {
+
+		Builder builder = new Builder(MyApplication.getContext());
+		builder.setTitle("tips");
+		builder.setMessage(message);
+		builder.setNegativeButton("OK", null);
+		Dialog dialog = builder.create();
+		dialog.getWindow()
+				.setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT);
+		dialog.show();
+		try {
+			Thread.currentThread();
+			Thread.sleep(200);
+		} catch (InterruptedException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		dialog.dismiss();
+	}
+
+	public static void showDialog(FloatWindowService service, String message,
+			int dismissTime) {
+		Log.i(TAG, "show Dialog");
+		initFloatParams();
+		Log.i(TAG, "LayoutInflater");
+		LayoutInflater inflater = LayoutInflater.from(service);
+		toastView = inflater.inflate(R.layout.float_toast, null);
+		toastText = (TextView) toastView.findViewById(R.id.text_toast);
+		toastText.setText(message);
+		Log.i(TAG, "show dialog");
+		mWindowManager.addView(toastView, wmToastParams);
+		new Handler().postDelayed(new Runnable() {
+			@Override
+			public void run() {
+				mWindowManager.removeView(toastView);
+			}
+		}, dismissTime);
+		Log.i(TAG, "remove dialog");
+
+	}
+
+	private static void initFloatParams() {
+
+		Log.i(TAG, "initFloatParams");
+		mWindowManager = (WindowManager) MyApplication.getContext()
+				.getSystemService(Context.WINDOW_SERVICE);
+		sW = mWindowManager.getDefaultDisplay().getWidth();
+		sH = mWindowManager.getDefaultDisplay().getHeight();
+
+		wmToastParams = new LayoutParams(LayoutParams.WRAP_CONTENT,
+				LayoutParams.WRAP_CONTENT);
+		wmToastParams.type = LayoutParams.TYPE_SYSTEM_ALERT;//
+		wmToastParams.format = PixelFormat.RGBA_8888;
+		wmToastParams.flags = LayoutParams.FLAG_NOT_FOCUSABLE;
+		wmToastParams.gravity = Gravity.LEFT | Gravity.TOP;
+		wmToastParams.x = sW / 5;
+		wmToastParams.y = sH / 3;
+		wmToastParams.width = sW / 3 * 2;
+		wmToastParams.height = sH / 5;
+
+	}
+
+	public static void writeNodeInfoToFile(List<RecordInfo> recordList)
+			throws JSONException {
+
+		int size = recordList.size();
+		Logger.i(TAG, "write NodeInfo To File! Total Size:" + size);
+		if (size > 0) {
+//			JSONObject nodeInfoAction = new JSONObject();
+//			List<JSONObject> clickJson = new ArrayList<JSONObject>();
+//
+//			//
+			 nodeInfosStrBuf = new StringBuffer();
+			nodeInfosStrBuf.append("[");
+			// input RecordInfo
+			RecordInfo lastInputRecord = null;
+			boolean isLastInputRecord = false;
+			for (int i = 0; i < size; i++) {
+				RecordInfo record = recordList.get(i);
+				Logger.i(TAG, "write node " + record.toString());
+				int actionType = record.getActionType();
+				// 过滤掉此次输入事件前面的不完全的文本，直接去最后一次完整的文本信息
+				if (RecordAction.ACTION_INPUT == actionType) {
+					lastInputRecord = record;
+					isLastInputRecord = true;
+					if (i == size - 1) {
+						// 输入文本
+						Logger.i(
+								TAG,
+								"last record 写入输入文本数据"
+										+ lastInputRecord.getInput_text());
+
+						String inputText = record.getInput_text();
+						String id = record.getId();
+						Logger.i(TAG, "ACTION_INPUT 写入的inputText: " + inputText
+								+ " id:" + id);
+						nodeInfosStrBuf.append(",").append("{").append("\"")
+								.append("action").append("\"").append(":")
+								.append("\"").append("ACTION_INPUT")
+								.append("\"");
+						nodeInfosStrBuf.append(",").append("\"")
+								.append("inputText").append("\"").append(":")
+								.append("\"").append(inputText).append("\"");
+						nodeInfosStrBuf.append(",").append("\"").append("id")
+								.append("\"").append(":").append("\"")
+								.append(Utils.getNormalId(id)).append("\"")
+								.append("}");
+						isLastInputRecord = false;
+					}
+					continue;
+				} else {
+					if (isLastInputRecord) {
+
+						Logger.i(TAG,
+								"写入输入文本数据" + lastInputRecord.getInput_text());
+						// 把input event 写入nodeInfoAction
+						String inputText = record.getInput_text();
+						String id = record.getId();
+						Logger.i(TAG, "ACTION_INPUT 写入的inputText: " + inputText
+								+ " id:" + id);
+//							nodeInfosStrBuf.append("{").append("\"")
+//							.append("action").append("\"").append(":")
+//							.append("\"").append("ACTION_INPUT")
+//							.append("\"");
+				
+						nodeInfosStrBuf.append(",").append("{").append("\"")
+								.append("action").append("\"").append(":")
+								.append("\"").append("ACTION_INPUT")
+								.append("\"");
+						nodeInfosStrBuf.append(",").append("\"")
+								.append("inputText").append("\"").append(":")
+								.append("\"").append(inputText).append("\"");
+						nodeInfosStrBuf.append(",").append("\"").append("id")
+								.append("\"").append(":").append("\"")
+								.append(Utils.getNormalId(id)).append("\"")
+								.append("}");
+
+						isLastInputRecord = false;
+					}
+				}
+				switch (actionType) {
+				case RecordAction.ACTION_STARTACTIVITY:
+					String packageName = record.getActivityName();
+					Logger.i(TAG, "ACTION_STARTACTIVITY 写入的packageName: "
+							+ packageName);
+					String inputText = record.getInput_text();
+					String id = record.getId();
+					Logger.i(TAG, "ACTION_INPUT 写入的inputText: " + inputText
+							+ " id:" + id);
+					nodeInfosStrBuf.append("{").append("\"").append("action")
+							.append("\"").append(":").append("\"")
+							.append("ACTION_STARTACTIVITY").append("\"");
+					nodeInfosStrBuf.append(",").append("\"")
+							.append("packageName").append("\"").append(":")
+							.append("\"").append(packageName).append("\"")
+							.append("}");
+					break;
+				case RecordAction.ACTION_CLICK:
+					// 点击控件
+					Logger.i(TAG, "开始写点击控件数据");
+					// Utils.clickNode(record.getNode());
+					
+					nodeInfosStrBuf.append(",").append("{").append("\"")
+							.append("action").append("\"").append(":")
+							.append("\"").append("ACTION_CLICK").append("\"");
+					nodeInfosStrBuf.append(",").append("\"")
+							.append("allowScroll").append("\"").append(":")
+							.append(record.isScroll());
+
+					if (record.getLocalType() == LOCALTYPE.WIDGETATTR) {
+						
+						nodeInfosStrBuf.append(",").append("\"")
+								.append("locationType").append("\"")
+								.append(":").append("\"").append("WIDGETATTR")
+								.append("\"");
+						if (!Utils.isNullOrBlank(record.getId())) {
+							nodeInfosStrBuf.append(",").append("\"")
+									.append("id").append("\"").append(":")
+									.append("\"")
+									.append(Utils.getNormalId(record.getId()))
+									.append("\"");
+						}
+						if (!Utils.isNullOrBlank(record.getText())) {
+							nodeInfosStrBuf
+									.append(",")
+									.append("\"")
+									.append("text")
+									.append("\"")
+									.append(":")
+									.append("\"")
+									.append(Utils.getNormalId(record.getText()))
+									.append("\"");
+						}
+						if (record.getBefore() != null) {
+							nodeInfosStrBuf.append(",").append("\"")
+									.append("before").append("\"").append(":")
+									.append("{");
+							nodeInfosStrBuf
+									.append("\"")
+									.append("id")
+									.append("\"")
+									.append(":")
+									.append("\"")
+									.append(Utils.getNormalId(record
+											.getBefore().getId())).append("\"");
+							nodeInfosStrBuf.append(",").append("\"")
+									.append("text").append("\"").append(":")
+									.append("\"")
+									.append(record.getBefore().getText())
+									.append("\"").append("}");
+
+						}
+						if (record.getAfter() != null) {
+
+							nodeInfosStrBuf.append(",").append("\"")
+									.append("after").append("\"").append(":")
+									.append("{");
+							nodeInfosStrBuf
+									.append("\"")
+									.append("id")
+									.append("\"")
+									.append(":")
+									.append("\"")
+									.append(Utils.getNormalId(record.getAfter()
+											.getId())).append("\"");
+							nodeInfosStrBuf.append(",").append("\"")
+									.append("text").append("\"").append(":")
+									.append("\"")
+									.append(record.getAfter().getText())
+									.append("\"").append("}");
+						}
+
+					} else if (record.getLocalType() == LOCALTYPE.NODE) {
+
+					} else if (record.getLocalType() == LOCALTYPE.PARENT) {
+
+					} else if (record.getLocalType() == LOCALTYPE.AXIS) {
+
+					}
+					nodeInfosStrBuf.append("}");
+//					Logger.i(TAG, "点击的数据是：" + nodeInfosStrBuf.toString());
+					break;
+				default:
+					break;
+				}
+			}
+			nodeInfosStrBuf.append("]");
+			Logger.i(TAG, "写入的录制数据是：" + nodeInfosStrBuf.toString());
+			long l = System.currentTimeMillis();
+			// new日期对象
+			Date date = new Date(l);
+			// 转换提日期输出格式
+			SimpleDateFormat dateFormat = new SimpleDateFormat(
+					"yyyy-MM-dd HH:mm:ss");
+			System.out.println(dateFormat.format(date).replace(" ", "_"));
+			Logger.i(TAG, "文件名是：" + dateFormat.format(date).replace(" ", "_"));
+			save(MyApplication.getContext(), nodeInfosStrBuf.toString(),
+					dateFormat.format(date).replace(" ", "_") + ".json");
+			Logger.i(TAG, "写入完成!");
+		} else {
+			Logger.e(TAG, "录制记录队列为空!，不需要写入");
+		}
+	}
+
+	private static JSONObject inputTextJson(RecordInfo record)
+			throws JSONException {
+		JSONObject actionInfoInput = new JSONObject();
+		String inputText = record.getInput_text();
+		String id = record.getId();
+		Logger.i(TAG, "ACTION_INPUT 写入的inputText: " + inputText + " id:" + id);
+		actionInfoInput.put("id", Utils.getNormalId(id));
+		actionInfoInput.put("inputText", inputText);
+		return actionInfoInput;
+	}
+
+	public static void save(Context context, String data, String fileName) {
+		FileOutputStream out = null;
+		BufferedWriter writer = null;
+		try {
+			out = context.openFileOutput(fileName, Context.MODE_PRIVATE);
+			writer = new BufferedWriter(new OutputStreamWriter(out));
+			writer.write(data);
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			Logger.i(TAG, "写入文件异常： " + e.toString());
+		} finally {
+			try {
+				if (writer != null) {
+					writer.close();
+				}
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+		}
+
+	}
+	public static String load(Context context,String fileName){
+		FileInputStream in = null;
+		BufferedReader reader = null;
+		StringBuilder content = new StringBuilder();
+		try{
+			in = context.openFileInput(fileName);
+			reader = new BufferedReader(new InputStreamReader(in));
+			String line = "";
+			while((line = reader.readLine())!=null){
+				content.append(line);
+			}
+		}catch(IOException e){
+			Logger.e(TAG, e.toString());
+		}finally{
+			if(reader != null){
+				try {
+					reader.close();
+				} catch (IOException e) {
+					// TODO Auto-generated catch block
+					Logger.e(TAG, e.toString());
+				}
+			}
+		}
+		return content.toString();
+	}
+}
