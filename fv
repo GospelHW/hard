@@ -1,0 +1,83 @@
+package com.hx.rebottest;
+
+import java.lang.reflect.Field;
+
+import android.content.Context;
+import android.util.AttributeSet;
+import android.view.MotionEvent;
+import android.view.View;
+import android.widget.ImageView;
+
+import com.hx.rebottest.service.FloatWindowService;
+
+public class FloatView extends ImageView {
+
+	private static final String TAG = "FloatView";
+
+	float x, y;
+	float mTouchStartX, mTouchStartY;
+	int top;
+
+	private FloatWindowService mService;
+
+	public FloatView(Context context, AttributeSet attrs) {
+		super(context, attrs);
+		mService = (FloatWindowService) context;
+		try {
+			Class c = Class.forName("com.android.internal.R$dimen");
+			Object obj = c.newInstance();
+			Field field = c.getField("status_bar_height");
+			int x = Integer.parseInt(field.get(obj).toString());
+			top = getResources().getDimensionPixelSize(x);
+		} catch (Exception e) {
+			// TODO: handle exception
+		}
+		setOnLongClickListener(new OnLongClickListener() {
+			@Override
+			public boolean onLongClick(View v) {
+				//
+
+				setBackgroundResource(R.drawable.btn_normal);
+				// mService.openClosedLayerViews();
+
+				return false;
+			}
+		});
+
+	}
+
+	@Override
+	public boolean onTouchEvent(MotionEvent event) {
+		x = event.getRawX();
+		y = event.getRawY() - top;
+
+		switch (event.getAction()) {
+		case MotionEvent.ACTION_DOWN:
+
+			this.setBackgroundResource(R.drawable.btn_normal_pressed);
+
+			mTouchStartX = event.getX();
+			mTouchStartY = event.getY();
+			mService.updateViewPosition(MotionEvent.ACTION_DOWN, x, y,
+					mTouchStartX, mTouchStartY);
+			break;
+		case MotionEvent.ACTION_MOVE:
+			mService.updateViewPosition(MotionEvent.ACTION_MOVE, x, y,
+					mTouchStartX, mTouchStartY);
+
+			break;
+
+		case MotionEvent.ACTION_UP:
+			mService.updateViewPosition(MotionEvent.ACTION_UP, x, y,
+					mTouchStartX, mTouchStartY);
+			mTouchStartX = mTouchStartY = 0;
+			this.setBackgroundResource(R.drawable.btn_normal);
+
+			break;
+		default:
+			break;
+		}
+		return true;
+	}
+
+}
